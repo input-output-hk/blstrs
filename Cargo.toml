@@ -25,11 +25,18 @@ rand = "0.8"
 bitvec = "1.0.1"
 pasta_curves = "0.5.0"
 halo2curves = { version = "0.7.0" }
-
-
 serde = { version = "1.0", features = ["derive"], optional = true }
 byte-slice-cast = "1.0.0"
 num-bigint = "0.4.6"
+
+[dependencies.sppark]
+version = "^0.1.5"
+
+[build-dependencies.cc]
+version = "^1.2.19"
+
+[build-dependencies.which]
+version = "^4.4.2"
 
 [dev-dependencies]
 rayon = "1.8"
@@ -43,8 +50,12 @@ getrandom = { version = "0.2", features = ["js"] }
 [features]
 default = ["serde"]
 portable = ["blst/portable"]
+force-adx = [ "blst/force-adx" ]
 h2c_compare = []
 __private_bench = []
+nvcc_sm_80 = []
+nvcc_sm_86 = []
+nvcc_sm_90 = []
 
 
 ## Benchmarks

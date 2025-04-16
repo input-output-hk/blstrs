@@ -1,18 +1,6 @@
-//! This benchmarks Multi Scalar Multiplication (MSM).
-//! Measurement on Bls12-381 G1.
-//!
-//! To run this benchmark:
-//!
-//!     cargo bench --bench msm
-//!
-//! To run the benchmark on halo2curve MSM version as well:
-//!
-//!     cargo bench --bench msm --features=h2c_compare
-
 #[macro_use]
 extern crate criterion;
 
-use criterion::{BenchmarkId, Criterion};
 use ff::PrimeField;
 use group::Group;
 use halo2curves::CurveAffine;
@@ -22,13 +10,12 @@ use rayon::current_thread_index;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::time::SystemTime;
 
-const SAMPLE_SIZE: usize = 10;
 const SEED: [u8; 16] = [
     0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc, 0xe5,
 ];
 
-const MULTICORE_RANGE: &[u8] = &[8, 10, 12, 14, 16, 18, 20];
 const BITS: &[usize] = &[256];
+const MULTICORE_RANGE: &[u8] = &[20];
 
 fn generate_curvepoints<C: CurveAffine>(k: u8) -> Vec<C> {
     let n: u64 = 1 << k;
@@ -103,66 +90,37 @@ fn generate_coefficients<F: PrimeField>(k: u8, bits: usize) -> Vec<F> {
 
 // Generates bases and coefficients for the given ranges and
 // bit lenghts.
-fn setup<C: CurveAffine>() -> (Vec<C>, Vec<Vec<C::ScalarExt>>) {
+fn setup<C: CurveAffine>() -> (Vec<C>, Vec<C::ScalarExt>) {
     let max_k = *MULTICORE_RANGE.iter().max().unwrap_or(&16);
     assert!(max_k < 64);
 
     let bases = generate_curvepoints::<C>(max_k);
-    let coeffs: Vec<_> = BITS
-        .iter()
-        .map(|b| generate_coefficients(max_k, *b))
-        .collect();
+
+    let coeffs: Vec<_> = generate_coefficients(max_k, BITS[0]);      
 
     (bases, coeffs)
 }
 
-fn msm_blst(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Msm");
-    group.significance_level(0.1).sample_size(SAMPLE_SIZE);
-
+#[test]
+fn msm_correctness() {
     let (bases, coeffs) = setup::<blstrs::G1Affine>();
 
-    // Blstrs version.
     for (b_index, b) in BITS.iter().enumerate() {
         for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("blstrs_{b}b_{k}");
+            println!("Testing gpu_{b}b_{k}...");
+
+            let gpu_msm = blstrs::msm_gpu(bases.as_slice(),  coeffs.as_slice());
+                  
             let points: Vec<blstrs::G1Projective> = bases.iter().map(Into::into).collect();
-            group.bench_function(BenchmarkId::new("Blst", id), |b| {
-                b.iter(|| blstrs::G1Projective::multi_exp(&points[..n], &coeffs[b_index][..n]))
-            });
+            let cpu_msm = blstrs::G1Projective::multi_exp(&points, &coeffs);
+
+            let affine_point_cpu: blstrs::G1Affine = blstrs::G1Affine::from(cpu_msm);
+            let affine_point_gpu: blstrs::G1Affine = blstrs::G1Affine::from(gpu_msm);
+
+            assert_eq!(affine_point_cpu, affine_point_gpu, "Mismatch at 2^{k} elements");
         }
     }
-
-    // Sppark version
-    for (b_index, b) in BITS.iter().enumerate() {
-        for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("gpu_{b}b_{k}");
-            group.bench_function(BenchmarkId::new("GPU", id), |b| {
-                b.iter(|| {
-                    blstrs::msm_gpu(&bases[..n], &coeffs[b_index][..n])
-                });
-            });
-        }
-    }
-
-    #[cfg(feature = "h2c_compare")]
-    // Halo2Curves version.
-    for (b_index, b) in BITS.iter().enumerate() {
-        for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("h2c_{b}b_{k}");
-            group.bench_function(BenchmarkId::new("halo2curves", id), |b| {
-                b.iter(|| {
-                    halo2curves::msm::msm_best(&coeffs[b_index][..n], &bases[..n]);
-                })
-            });
-        }
-    }
-
-    group.finish();
+    println!("All GPU MSM tests passed!");
 }
 
-criterion_group!(benches, msm_blst);
-criterion_main!(benches);
+

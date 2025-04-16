@@ -13,10 +13,34 @@ Due to the assembly based nature of the implementation in `blst`, currently only
 - `x86_64`,
 - `aarch64`.
 
+
 ## BLST Portability
 
 To enable portable features when building the blst dependency, use the 'portable' feature: `--features portable`.
 
+## NVCC Architecture Selection
+Available options:
+
+- nvcc_sm_80 (default)
+
+- nvcc_sm_86
+
+- nvcc_sm_90
+
+
+```
+$ cargo bench --features __private_bench, nvcc_sm_80
+```
+
+
+```
+$ cargo bench --features __private_bench, nvcc_sm_86
+```
+
+
+```
+$ cargo bench --features __private_bench, nvcc_sm_90
+```
 
 ## Benchmarking
 

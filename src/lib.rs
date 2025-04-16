@@ -112,3 +112,108 @@ fn u64_to_u32(limbs: &[u64]) -> Vec<u32> {
 fn bls12_engine_tests() {
     crate::tests::engine::engine_tests::<Bls12>();
 }
+
+//////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+// GPU Integration
+
+use sppark::{NTTInputOutputOrder, NTTDirection, NTTType};
+use core::ffi::c_void;
+use group::Group;
+
+extern "C" {
+    fn sppark_msm(
+        out: *mut c_void,
+        points_with_infinity: *const c_void,
+        npoints: usize,
+        scalars: *const c_void,
+        ffi_affine_sz: usize,
+    ) -> sppark::Error;
+}
+
+pub fn msm_gpu(
+    points: &[G1Affine],
+    scalars: &[Scalar],
+) -> G1Projective {
+    let npoints = points.len();
+
+    if npoints != scalars.len() {
+        panic!("length mismatch")
+    }
+
+    let mut ret = G1Projective::identity();
+    let err = unsafe {
+        sppark_msm(
+            &mut ret as *mut _ as *mut _,
+            points.as_ptr() as *const _,
+            npoints,
+            scalars.as_ptr() as *const _,
+            std::mem::size_of::<G1Affine>(),
+        )
+    };
+
+    if err.code != 0 {
+        panic!("MSM GPU error: {}", String::from(err));
+    }
+
+    ret
+}
+
+extern "C" {
+    fn sppark_ntt(
+        device_id: usize,
+        inout: *mut core::ffi::c_void,
+        lg_domain_size: u32,
+        ntt_order: NTTInputOutputOrder,
+        ntt_direction: NTTDirection,
+        ntt_type: NTTType,
+    ) -> sppark::Error;
+}
+
+/// Compute an in-place forward NTT on the input data.
+#[allow(non_snake_case)]
+pub fn ntt_gpu<T>(device_id: usize, inout: &mut [T], order: NTTInputOutputOrder) {
+    let len = inout.len();
+    if (len & (len - 1)) != 0 {
+        panic!("inout.len() is not power of 2");
+    }
+
+    let err = unsafe {
+        sppark_ntt(
+            device_id,
+            inout.as_mut_ptr() as *mut _,
+            len.trailing_zeros(),
+            order,
+            NTTDirection::Forward,
+            NTTType::Standard,
+        )
+    };
+
+    if err.code != 0 {
+        panic!("{}", String::from(err));
+    }
+}
+
+/// Compute an in-place inverse NTT on the input data.
+#[allow(non_snake_case)]
+pub fn intt_gpu<T>(device_id: usize, inout: &mut [T], order: NTTInputOutputOrder) {
+    let len = inout.len();
+    if (len & (len - 1)) != 0 {
+        panic!("inout.len() is not power of 2");
+    }
+
+    let err = unsafe {
+        sppark_ntt(
+            device_id,
+            inout.as_mut_ptr() as *mut _,
+            len.trailing_zeros(),
+            order,
+            NTTDirection::Inverse,
+            NTTType::Standard,
+        )
+    };
+
+    if err.code != 0 {
+        panic!("{}", String::from(err));
+    }
+}
