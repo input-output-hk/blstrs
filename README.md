@@ -29,23 +29,23 @@ Available options:
 
 
 ```
-$ cargo bench --features __private_bench, nvcc_sm_80
+$ cargo bench --features  nvcc_sm_80,__private_bench
 ```
 
 
 ```
-$ cargo bench --features __private_bench, nvcc_sm_86
+$ cargo bench --features  nvcc_sm_86,__private_bench
 ```
 
 
 ```
-$ cargo bench --features __private_bench, nvcc_sm_90
+$ cargo bench --features  nvcc_sm_90,__private_bench
 ```
 
 ## Benchmarking
 
 ```
-$ cargo bench --features __private_bench
+$ cargo bench --features nvcc_sm_80,__private_bench
 ```
 
 

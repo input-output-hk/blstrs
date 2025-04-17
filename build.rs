@@ -102,6 +102,20 @@ fn main() {
         nvcc.flag("-gencode").flag(nvcc_gencode);
         nvcc.flag("-lineinfo"); 
         nvcc.flag("-t0");
+
+        // If compiling in debug mode, add the -G flag and reduce optimizations.
+        if cfg!(debug_assertions) {
+            println!("Compiling nvcc in debug mode: adding -G and -O0 flags");
+            nvcc.flag("-lineinfo"); 
+            nvcc.flag("-Xptxas").flag("-v");
+            nvcc.flag("-G");
+            nvcc.flag("-O0");
+        } else {
+            // For release mode, set the optimization level
+            nvcc.flag("-O3");
+            nvcc.flag("--use_fast_math");
+        }
+
         #[cfg(not(target_env = "msvc"))]
         nvcc.flag("-Xcompiler").flag("-Wno-unused-function");
         nvcc.define("TAKE_RESPONSIBILITY_FOR_ERROR_MESSAGE", None);
