@@ -28,6 +28,7 @@ halo2curves = { version = "0.7.0" }
 serde = { version = "1.0", features = ["derive"], optional = true }
 byte-slice-cast = "1.0.0"
 num-bigint = "0.4.6"
+rand_chacha = "0.3"
 
 [dependencies.sppark]
 version = "^0.1.5"

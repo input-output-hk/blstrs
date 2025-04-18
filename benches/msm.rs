@@ -21,6 +21,7 @@ use rand_xorshift::XorShiftRng;
 use rayon::current_thread_index;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::time::SystemTime;
+use rand_chacha::ChaCha20Rng;
 
 const SAMPLE_SIZE: usize = 10;
 const SEED: [u8; 16] = [
@@ -28,7 +29,6 @@ const SEED: [u8; 16] = [
 ];
 
 const MULTICORE_RANGE: &[u8] = &[8, 10, 12, 14, 16, 18, 20];
-const BITS: &[usize] = &[256];
 
 fn generate_curvepoints<C: CurveAffine>(k: u8) -> Vec<C> {
     let n: u64 = 1 << k;
@@ -59,60 +59,27 @@ fn generate_curvepoints<C: CurveAffine>(k: u8) -> Vec<C> {
     bases
 }
 
-fn generate_coefficients<F: PrimeField>(k: u8, bits: usize) -> Vec<F> {
-    let n: u64 = 1 << k;
-    let max_val: Option<u128> = match bits {
-        1 => Some(1),
-        8 => Some(0xff),
-        16 => Some(0xffff),
-        32 => Some(0xffff_ffff),
-        64 => Some(0xffff_ffff_ffff_ffff),
-        128 => Some(0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff),
-        256 => None,
-        _ => panic!("unexpected bit size {}", bits),
-    };
+fn generate_coefficients<F: PrimeField>(k: u8) -> Vec<F> {
+    let n = 1usize
+        .checked_shl(k as u32)
+        .expect("k çok büyük");
+    // OS tabanlı seed ile ChaCha20Rng’i başlat
+    let mut rng = ChaCha20Rng::from_entropy(); // requires rand_chacha + rand 0.8
 
-    let coeffs = (0..n)
-        .into_par_iter()
-        .map_init(
-            || {
-                let mut thread_seed = SEED;
-                let uniq = current_thread_index().unwrap().to_ne_bytes();
-                assert!(std::mem::size_of::<usize>() == 8);
-                for i in 0..uniq.len() {
-                    thread_seed[i] += uniq[i];
-                    thread_seed[i + 8] += uniq[i];
-                }
-                XorShiftRng::from_seed(thread_seed)
-            },
-            |rng, _| {
-                if let Some(max_val) = max_val {
-                    let v_lo = rng.next_u64() as u128;
-                    let v_hi = rng.next_u64() as u128;
-                    let mut v = v_lo + (v_hi << 64);
-                    v &= max_val; // Mask the 128bit value to get a lower number of bits
-                    F::from_u128(v)
-                } else {
-                    F::random(rng)
-                }
-            },
-        )
-        .collect();
-    coeffs
+    (0..n)
+        .map(|_| F::random(&mut rng))
+        .collect()
 }
 
 // Generates bases and coefficients for the given ranges and
 // bit lenghts.
-fn setup<C: CurveAffine>() -> (Vec<C>, Vec<Vec<C::ScalarExt>>) {
+fn setup<C: CurveAffine>() -> (Vec<C>, Vec<C::ScalarExt>) {
     let max_k = *MULTICORE_RANGE.iter().max().unwrap_or(&16);
     assert!(max_k < 64);
 
     let bases = generate_curvepoints::<C>(max_k);
-    let coeffs: Vec<_> = BITS
-        .iter()
-        .map(|b| generate_coefficients(max_k, *b))
-        .collect();
-
+    let coeffs: Vec<_> = generate_coefficients(max_k);
+      
     (bases, coeffs)
 }
 
@@ -123,43 +90,40 @@ fn msm_blst(c: &mut Criterion) {
     let (bases, coeffs) = setup::<blstrs::G1Affine>();
 
     // Blstrs version.
-    for (b_index, b) in BITS.iter().enumerate() {
-        for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("blstrs_{b}b_{k}");
-            let points: Vec<blstrs::G1Projective> = bases.iter().map(Into::into).collect();
-            group.bench_function(BenchmarkId::new("Blst", id), |b| {
-                b.iter(|| blstrs::G1Projective::multi_exp(&points[..n], &coeffs[b_index][..n]))
-            });
-        }
+    for k in MULTICORE_RANGE {
+        let n: usize = 1 << k;
+        let id = format!("blstrs_{k}");
+        let points: Vec<blstrs::G1Projective> = bases.iter().map(Into::into).collect();
+        group.bench_function(BenchmarkId::new("Blst", id), |b| {
+            b.iter(|| blstrs::G1Projective::multi_exp(&points[..n], &coeffs[..n]))
+        });
     }
+    
 
     // Sppark version
-    for (b_index, b) in BITS.iter().enumerate() {
-        for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("gpu_{b}b_{k}");
-            group.bench_function(BenchmarkId::new("GPU", id), |b| {
-                b.iter(|| {
-                    blstrs::msm_gpu(&bases[..n], &coeffs[b_index][..n])
-                });
+    for k in MULTICORE_RANGE {
+        let n: usize = 1 << k;
+        let id = format!("gpu_{k}");
+        group.bench_function(BenchmarkId::new("GPU", id), |b| {
+            b.iter(|| {
+                blstrs::msm_gpu(&bases[..n], &coeffs[..n])
             });
-        }
+        });
     }
+
 
     #[cfg(feature = "h2c_compare")]
     // Halo2Curves version.
-    for (b_index, b) in BITS.iter().enumerate() {
-        for k in MULTICORE_RANGE {
-            let n: usize = 1 << k;
-            let id = format!("h2c_{b}b_{k}");
-            group.bench_function(BenchmarkId::new("halo2curves", id), |b| {
-                b.iter(|| {
-                    halo2curves::msm::msm_best(&coeffs[b_index][..n], &bases[..n]);
-                })
-            });
-        }
+    for k in MULTICORE_RANGE {
+        let n: usize = 1 << k;
+        let id = format!("h2c_{k}");
+        group.bench_function(BenchmarkId::new("halo2curves", id), |b| {
+            b.iter(|| {
+                halo2curves::msm::msm_best(&coeffs[..n], &bases[..n]);
+            })
+        });
     }
+    
 
     group.finish();
 }
